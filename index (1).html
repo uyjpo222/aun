@@ -1,101 +1,179 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Teachable Machine Image Model (Mobile)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- ทำ responsive -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      margin: 0;
-      padding: 0;
-    }
-    #webcam-container {
-      max-width: 100%;
-      margin: 10px auto;
-    }
-    video {
-      max-width: 100%;
-      height: auto;
-    }
-    #label-container {
-      margin: 10px;
-      font-size: 1.2em;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 1em;
-      margin: 5px;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>Stardew Dashboard Modern</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+body { font-family:'Segoe UI', sans-serif; background:#f5f5f5; color:#333; margin:0; padding:20px; text-align:center; }
+h1 { color:#222; margin-bottom:20px; }
+#webcam-container { margin:20px auto; border-radius:12px; overflow:hidden; box-shadow:0 0 20px rgba(0,0,0,0.2); }
+#label-container { max-width:400px; margin:15px auto; text-align:left; }
+.class-box { background:#fff; padding:12px; margin:6px 0; border-radius:10px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 2px 6px rgba(0,0,0,0.1); transition:0.3s; }
+.progress { height:6px; border-radius:4px; background:#eee; width:100%; margin-top:6px; overflow:hidden; }
+.progress-bar { height:100%; width:0%; border-radius:4px; background: linear-gradient(90deg,#4facfe,#00f2fe); transition: width 0.3s; }
+
+button { padding:10px 16px; margin:5px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; background:#4facfe; color:#fff; transition:0.2s; }
+button:hover { transform:scale(1.05); background:#00f2fe; }
+
+#mqtt-info { margin:10px auto; max-width:400px; text-align:left; background:#fff; padding:15px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+#mqtt-status { font-weight:bold; }
+.connected { color:#28a745; }
+.disconnected { color:#dc3545; }
+.sending { color:#ffc107; }
+</style>
 </head>
 <body>
-  <div>Teachable Machine Image Model (Mobile)</div>
-  <button type="button" onclick="init('environment')">Start (Back Camera)</button>
-  <button type="button" onclick="init('user')">Start (Front Camera)</button>
-  <button type="button" onclick="stop()">Stop</button>
-  <div id="webcam-container"></div>
-  <div id="label-container"></div>
 
-  <script type="text/javascript">
-    const URL = "https://teachablemachine.withgoogle.com/models/hGmOXhF9c/";
+<h1>Stardew Dashboard Modern</h1>
 
-    let model, webcam, labelContainer, maxPredictions;
+<div id="controls">
+  <input id="broker-input" value="wss://broker.hivemq.com:8884/mqtt" placeholder="Broker URL" style="width:250px;">
+  <input id="topic-input" value="sinn" placeholder="Topic" style="width:150px;"> <!-- เปลี่ยนเป็น sinn -->
+  <button onclick="connectMQTT()">Connect MQTT</button>
+  <button onclick="disconnectMQTT()">Disconnect MQTT</button>
+</div>
 
-    async function init(facingMode) {
-      const modelURL = URL + "model.json";
-      const metadataURL = URL + "metadata.json";
+<div id="mqtt-info">
+  <div>Broker: <span id="mqtt-broker">---</span></div>
+  <div>Topic: <span id="mqtt-topic">---</span></div>
+  <div>Status: <span id="mqtt-status" class="disconnected">Disconnected</span></div>
+  <div>Messages Sent: <span id="mqtt-count">0</span></div>
+</div>
 
-      model = await tmImage.load(modelURL, metadataURL);
-      maxPredictions = model.getTotalClasses();
+<div>
+  <button onclick="startCamera('environment')">Back Camera</button>
+  <button onclick="startCamera('user')">Front Camera</button>
+  <button onclick="stopCamera()">Stop Camera</button>
+</div>
 
-      // ตั้งค่า Webcam สำหรับมือถือ โดยระบุ facingMode
-      webcam = new tmImage.Webcam(224, 224, false); // ใช้ 224x224 เหมือนเดิม
-      try {
-        await webcam.setup({ facingMode: facingMode }); // เลือกกล้องหน้า (user) หรือหลัง (environment)
-        await webcam.play();
-        if (!webcam.canvas) {
-          throw new Error("Webcam canvas is not initialized");
-        }
-        console.log("Webcam initialized, width:", webcam.canvas.width, "facingMode:", facingMode);
-        window.requestAnimationFrame(loop);
-      } catch (e) {
-        console.error("Webcam setup failed:", e);
-        document.getElementById("label-container").innerText = "Error: " + e.message;
-        return;
-      }
+<div id="webcam-container"></div>
+<div id="label-container"></div>
 
-      document.getElementById("webcam-container").appendChild(webcam.canvas);
-      labelContainer = document.getElementById("label-container");
-      labelContainer.innerHTML = ""; // ล้างผลลัพธ์เก่า
-      for (let i = 0; i < maxPredictions; i++) {
-        labelContainer.appendChild(document.createElement("div"));
-      }
+<script>
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/_sMNwnsBK/"; // เปลี่ยนโมเดลใหม่
+let model, webcam, maxPredictions;
+let client;
+let msgCount = 0;
+let lastSentClass = null;
+
+async function startCamera(facingMode){
+  model = await tmImage.load(MODEL_URL+"model.json", MODEL_URL+"metadata.json");
+  maxPredictions = model.getTotalClasses();
+
+  webcam = new tmImage.Webcam(300,300,true);
+  await webcam.setup({facingMode});
+  await webcam.play();
+  document.getElementById("webcam-container").innerHTML="";
+  document.getElementById("webcam-container").appendChild(webcam.canvas);
+
+  window.requestAnimationFrame(loop);
+}
+
+function stopCamera(){
+  if(webcam){
+    let stream = webcam.webcam.srcObject;
+    stream.getTracks().forEach(track=>track.stop());
+    document.getElementById("webcam-container").innerHTML="";
+    document.getElementById("label-container").innerHTML="";
+    webcam = null;
+  }
+}
+
+async function loop(){
+  webcam.update();
+  const prediction = await model.predict(webcam.canvas);
+  renderUI(prediction);
+
+  const topPrediction = prediction.reduce((a,b)=>a.probability>b.probability?a:b);
+
+  if(topPrediction.probability >= 0.95 && client && client.connected){
+    if(lastSentClass !== topPrediction.className){
+      sendMQTT(topPrediction.className);
+      lastSentClass = topPrediction.className;
     }
+  }
 
-    async function loop() {
-      webcam.update();
-      await predict();
-      window.requestAnimationFrame(loop);
-    }
+  if(topPrediction.probability < 0.1){
+    lastSentClass = null;
+  }
 
-    async function predict() {
-      const prediction = await model.predict(webcam.canvas);
-      for (let i = 0; i < maxPredictions; i++) {
-        const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
-        labelContainer.childNodes[i].innerHTML = classPrediction;
-      }
-    }
+  requestAnimationFrame(loop);
+}
 
-    function stop() {
-      if (webcam) {
-        webcam.stop();
-        document.getElementById("webcam-container").innerHTML = '';
-        document.getElementById("label-container").innerHTML = '';
-      }
+function renderUI(prediction){
+  const container = document.getElementById("label-container");
+  container.innerHTML="";
+  prediction.forEach(p=>{
+    const div = document.createElement("div");
+    div.className="class-box";
+    div.innerHTML=`<span>${p.className}</span><span>${(p.probability*100).toFixed(1)}%</span>
+      <div class="progress"><div class="progress-bar" style="width:${(p.probability*100).toFixed(1)}%"></div></div>`;
+    container.appendChild(div);
+  });
+}
+
+function connectMQTT(){
+  const broker = document.getElementById("broker-input").value;
+  const topic = document.getElementById("topic-input").value;
+  if(!broker||!topic){ alert("Enter Broker and Topic"); return; }
+  client = mqtt.connect(broker);
+
+  document.getElementById("mqtt-broker").innerText = broker;
+  document.getElementById("mqtt-topic").innerText = topic;
+
+  client.on("connect", ()=>{
+    document.getElementById("mqtt-status").innerText="Connected";
+    document.getElementById("mqtt-status").className="connected";
+    console.log("MQTT Connected");
+  });
+  client.on("error", err=>{
+    document.getElementById("mqtt-status").innerText="Error";
+    document.getElementById("mqtt-status").className="disconnected";
+    console.error(err);
+  });
+  client.on("close", ()=>{
+    document.getElementById("mqtt-status").innerText="Disconnected";
+    document.getElementById("mqtt-status").className="disconnected";
+  });
+}
+
+function disconnectMQTT(){
+  if(client){ client.end(); client=null;
+    document.getElementById("mqtt-status").innerText="Disconnected";
+    document.getElementById("mqtt-status").className="disconnected";
+  }
+}
+
+function sendMQTT(className){
+  if(client && client.connected){
+    document.getElementById("mqtt-status").innerText="Sending...";
+    document.getElementById("mqtt-status").className="sending";
+    client.publish(document.getElementById("mqtt-topic").innerText, className, {}, ()=>{
+      document.getElementById("mqtt-status").innerText="Connected";
+      document.getElementById("mqtt-status").className="connected";
+      msgCount++;
+      document.getElementById("mqtt-count").innerText = msgCount;
+      flashHighlight(className);
+    });
+  }
+}
+
+function flashHighlight(className){
+  const boxes = document.querySelectorAll(".class-box");
+  boxes.forEach(b=>{
+    if(b.innerText.includes(className)){
+      b.style.boxShadow = "0 0 15px #00f";
+      setTimeout(()=>b.style.boxShadow="",300);
     }
-  </script>
+  });
+}
+</script>
+
 </body>
 </html>
